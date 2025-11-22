@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+*.so
+*.egg-info/
+
+# 환경 변수 파일
+.env
+.env.*
+
+# Docker
+*.log
+*.pid
+*.sqlite3
+*.db
+*.tar
+*.gz
+*.bak
+*.tmp
+
+# VSCode
+.vscode/
+
+# macOS
+.DS_Store
+
+# Pytest
+.cache/
+.pytest_cache/
+
+# mypy
+.mypy_cache/
+
+# pipenv / poetry / venv
+.venv/
+venv/
+pip-wheel-metadata/
+poetry.lock
+Pipfile.lock
+poetry.toml
+
+# supabase client generation (optional)
+supabase/config.toml
+supabase/migrations/
+
+node_modules/
