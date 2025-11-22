@@ -1,10 +1,13 @@
 import json
 import os
+import logging
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import joblib
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 class EnsemblePredictor:
@@ -24,7 +27,14 @@ class EnsemblePredictor:
     @staticmethod
     def _load_config(path: Path) -> Dict:
         if not path.exists():
-            raise FileNotFoundError(f"Ensemble config not found: {path}")
+            error_msg = (
+                f"Ensemble config not found: {path}. "
+                f"Absolute path: {path.resolve()}, "
+                f"Exists: {path.exists()}"
+            )
+            logger.error(error_msg)
+            raise FileNotFoundError(error_msg)
+        logger.info(f"Loading config from: {path}")
         with path.open("r", encoding="utf-8") as f:
             return json.load(f)
 
@@ -35,7 +45,14 @@ class EnsemblePredictor:
             rel_path = entry.get("model_path")
             model_path = (base_dir / rel_path).resolve()
             if not model_path.exists():
-                raise FileNotFoundError(f"Model file not found: {model_path}")
+                error_msg = (
+                    f"Model file not found: {model_path}. "
+                    f"Base dir: {base_dir}, Relative path: {rel_path}, "
+                    f"Absolute path: {model_path.resolve()}, Exists: {model_path.exists()}"
+                )
+                logger.error(error_msg)
+                raise FileNotFoundError(error_msg)
+            logger.info(f"Loading model: {model_path}")
             model = joblib.load(model_path)
             loaded.append(
                 {
@@ -51,6 +68,7 @@ class EnsemblePredictor:
         # Normalize weights to ensure they add up to 1
         for item in loaded:
             item["weight"] /= weight_sum
+        logger.info(f"Loaded {len(loaded)} models with normalized weights")
         return loaded
 
     @staticmethod
@@ -165,9 +183,31 @@ _predictor_instances: Dict[str, EnsemblePredictor] = {}
 def _default_model_dir() -> Path:
     env_dir = os.getenv("IRACING_ML_MODEL_DIR")
     if env_dir:
-        return Path(env_dir).resolve()
+        resolved = Path(env_dir).resolve()
+        logger.info(f"Using model directory from IRACING_ML_MODEL_DIR: {resolved}")
+        return resolved
     # Default: ../ghostx_front/ml_models relative to this file
-    return (Path(__file__).parent.parent.parent / "ghostx_front" / "ml_models").resolve()
+    # Also try /app/ml_models for Docker/Cloud Run environments
+    default_paths = [
+        Path(__file__).parent.parent.parent / "ghostx_front" / "ml_models",
+        Path("/app") / "ml_models",
+        Path("/app") / "ghostx_front" / "ml_models",
+        Path(".") / "ml_models",
+    ]
+    
+    for path in default_paths:
+        resolved = path.resolve()
+        if resolved.exists():
+            logger.info(f"Using default model directory: {resolved}")
+            return resolved
+    
+    # Return the first path even if it doesn't exist (for error messages)
+    first_path = default_paths[0].resolve()
+    logger.warning(
+        f"Model directory not found. Tried: {[str(p.resolve()) for p in default_paths]}. "
+        f"Using: {first_path}. Set IRACING_ML_MODEL_DIR environment variable."
+    )
+    return first_path
 
 
 def _find_latest_config(model_dir: Path) -> Optional[Path]:
@@ -182,15 +222,23 @@ def _resolve_config_path(mode: str) -> Path:
     env_key = f"IRACING_ENSEMBLE_CONFIG_{mode_upper}"
     config_path_env = os.getenv(env_key)
     if config_path_env:
-        return Path(config_path_env).resolve()
+        resolved = Path(config_path_env).resolve()
+        logger.info(f"Using {mode} config from environment: {resolved}")
+        return resolved
 
     model_dir = _default_model_dir() / mode
+    logger.info(f"Searching for {mode} config in: {model_dir}")
     config_path = _find_latest_config(model_dir)
     if config_path is None:
-        raise FileNotFoundError(
+        error_msg = (
             f"No ensemble_config_*.json found in {model_dir}. "
-            f"Set {env_key} or run the training pipeline for mode '{mode}'."
+            f"Set {env_key} environment variable or ensure model files exist. "
+            f"Current working directory: {os.getcwd()}, "
+            f"Default model dir: {_default_model_dir()}"
         )
+        logger.error(error_msg)
+        raise FileNotFoundError(error_msg)
+    logger.info(f"Found {mode} config: {config_path}")
     return config_path
 
 

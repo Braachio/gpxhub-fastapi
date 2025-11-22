@@ -1,6 +1,7 @@
 from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import os
+import logging
 from dotenv import load_dotenv
 
 # API 모듈 import
@@ -17,8 +18,14 @@ from api.ml_predict import router as ml_predict_router
 from app.api.endpoints.collector import router as collector_router
 from app.api.endpoints.predict import router as predict_router
 
+# ML predictor import for startup preloading
+from services.ml_predictor import get_predictor
+
 app = FastAPI()
 load_dotenv()
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
 
 @app.get("/")
@@ -55,6 +62,38 @@ app.include_router(iracing_sdk.router, prefix="/api")
 app.include_router(telemetry_upload_router, prefix="/api")
 app.include_router(ml_predict_router)
 # app.include_router(track_corners.router)
+
+
+@app.on_event("startup")
+async def startup_event():
+    """
+    Preload ML models at startup to fail fast if models are not available.
+    This prevents 503 errors on first request.
+    """
+    logger.info("🚀 Starting application startup...")
+    
+    # Preload models for both modes
+    for mode in ["pre", "post"]:
+        try:
+            logger.info(f"📦 Preloading {mode} mode predictor...")
+            predictor = get_predictor(mode=mode)
+            logger.info(
+                f"✅ {mode.upper()} mode predictor loaded successfully. "
+                f"Model version: {predictor.model_version}, "
+                f"Features: {len(predictor.feature_names)}"
+            )
+        except FileNotFoundError as e:
+            logger.error(f"❌ Failed to load {mode} mode predictor: {e}")
+            logger.error(
+                "💡 Tip: Set IRACING_ML_MODEL_DIR or IRACING_ENSEMBLE_CONFIG_* "
+                "environment variables, or ensure model files are in the expected location."
+            )
+            # Don't fail startup - allow the app to start but requests will return 503
+            # This is better than crashing the entire service
+        except Exception as e:
+            logger.error(f"❌ Unexpected error loading {mode} mode predictor: {e}", exc_info=True)
+    
+    logger.info("✅ Application startup complete")
 
 
 if __name__ == "__main__":
