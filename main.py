@@ -20,6 +20,7 @@ from app.api.endpoints.predict import router as predict_router
 
 # ML predictor import for startup preloading
 from services.ml_predictor import get_predictor
+from utils.gcs_downloader import download_models_from_gcs
 
 app = FastAPI()
 load_dotenv()
@@ -72,6 +73,31 @@ async def startup_event():
     """
     logger.info("🚀 Starting application startup...")
     
+    # Try to download models from GCS if they don't exist locally
+    from pathlib import Path
+    model_dir = Path("/app/ml_models")
+    
+    # Check if model files exist
+    pkl_files = list(model_dir.glob("**/*.pkl")) if model_dir.exists() else []
+    logger.info(f"📂 Model directory: {model_dir}, exists: {model_dir.exists()}, pkl files found: {len(pkl_files)}")
+    
+    if not pkl_files:
+        logger.warning("⚠️ No .pkl model files found locally, attempting to download from GCS...")
+        gcs_bucket = os.getenv("GCS_MODEL_BUCKET")
+        if gcs_bucket:
+            logger.info(f"📥 GCS_MODEL_BUCKET is set to: {gcs_bucket}")
+            success = download_models_from_gcs(local_dir=model_dir)
+            if success:
+                # Re-check after download
+                pkl_files = list(model_dir.glob("**/*.pkl"))
+                logger.info(f"📦 After GCS download: {len(pkl_files)} pkl files found")
+            else:
+                logger.error("❌ GCS download failed or returned False")
+        else:
+            logger.warning("⚠️ GCS_MODEL_BUCKET environment variable not set. Skipping GCS download.")
+    else:
+        logger.info(f"✅ Found {len(pkl_files)} model files locally, skipping GCS download")
+    
     # Preload models for both modes
     for mode in ["pre", "post"]:
         try:
@@ -86,7 +112,8 @@ async def startup_event():
             logger.error(f"❌ Failed to load {mode} mode predictor: {e}")
             logger.error(
                 "💡 Tip: Set IRACING_ML_MODEL_DIR or IRACING_ENSEMBLE_CONFIG_* "
-                "environment variables, or ensure model files are in the expected location."
+                "environment variables, or ensure model files are in the expected location. "
+                "For GitHub auto-build, upload models to GCS and set GCS_MODEL_BUCKET."
             )
             # Don't fail startup - allow the app to start but requests will return 503
             # This is better than crashing the entire service
