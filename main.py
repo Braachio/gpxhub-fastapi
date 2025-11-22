@@ -73,7 +73,7 @@ async def startup_event():
     """
     logger.info("🚀 Starting application startup...")
     
-    # Try to download models from GCS if they don't exist locally
+    # IMPORTANT: Download models from GCS FIRST before trying to load them
     from pathlib import Path
     model_dir = Path("/app/ml_models")
     
@@ -81,22 +81,32 @@ async def startup_event():
     pkl_files = list(model_dir.glob("**/*.pkl")) if model_dir.exists() else []
     logger.info(f"📂 Model directory: {model_dir}, exists: {model_dir.exists()}, pkl files found: {len(pkl_files)}")
     
-    if not pkl_files:
-        logger.warning("⚠️ No .pkl model files found locally, attempting to download from GCS...")
-        gcs_bucket = os.getenv("GCS_MODEL_BUCKET")
-        if gcs_bucket:
-            logger.info(f"📥 GCS_MODEL_BUCKET is set to: {gcs_bucket}")
-            success = download_models_from_gcs(local_dir=model_dir)
-            if success:
-                # Re-check after download
-                pkl_files = list(model_dir.glob("**/*.pkl"))
-                logger.info(f"📦 After GCS download: {len(pkl_files)} pkl files found")
-            else:
-                logger.error("❌ GCS download failed or returned False")
+    # Always try GCS download if bucket is set, even if some files exist
+    # This ensures all required files are present
+    gcs_bucket = os.getenv("GCS_MODEL_BUCKET")
+    if gcs_bucket:
+        logger.info(f"📥 GCS_MODEL_BUCKET is set to: {gcs_bucket}")
+        if not pkl_files:
+            logger.warning("⚠️ No .pkl model files found locally, downloading from GCS...")
         else:
-            logger.warning("⚠️ GCS_MODEL_BUCKET environment variable not set. Skipping GCS download.")
+            logger.info(f"📥 Found {len(pkl_files)} files locally, but checking GCS for missing files...")
+        
+        # Download models from GCS (will skip existing files)
+        success = download_models_from_gcs(local_dir=model_dir, force_download=False)
+        if success:
+            # Re-check after download
+            pkl_files = list(model_dir.glob("**/*.pkl"))
+            logger.info(f"📦 After GCS download: {len(pkl_files)} pkl files found")
+        else:
+            logger.warning("⚠️ GCS download completed with warnings, but continuing...")
     else:
-        logger.info(f"✅ Found {len(pkl_files)} model files locally, skipping GCS download")
+        logger.warning("⚠️ GCS_MODEL_BUCKET environment variable not set. Skipping GCS download.")
+        if not pkl_files:
+            logger.error("❌ No model files found and GCS_MODEL_BUCKET not set!")
+    
+    # Wait a moment for file system to sync
+    import time
+    time.sleep(1)
     
     # Preload models for both modes
     for mode in ["pre", "post"]:
